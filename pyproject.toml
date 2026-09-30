@@ -1,0 +1,16 @@
+[project]
+name = "po-ludzku"
+version = "0.1.0"
+description = "Po ludzku — lokalne streszczenie pisma. Produkt KOD.AI sp. z o.o."
+requires-python = ">=3.12"
+readme = "README.md"
+
+[tool.uv.workspace]
+members = ["packages/core", "apps/pismo", "apps/kartka"]
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "-q"
