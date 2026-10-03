@@ -11,4 +11,6 @@ Zakres: commit 1365684 + poprawki pozostałych P3 z docs/adversarial-R4-2026-10-
 
 Odrzucone: brak. Znane, nie zgłoszone: „w terminie 1 dniach” czytane jako 1 dzień (niepoprawna polszczyzna, nieszkodliwe).
 
+Model recenzenta zatwierdzony przez Piotra 2026-10-03: „oczywiście używaj opus 5.5” (dosłownie: „ocyzwiscie uzywaj opus 5.5”). Self-report `claude-opus-5-5` przyjęty jako receipt.
+
 ADVERSARIAL VERDICT: SIGN-OFF (R4)
