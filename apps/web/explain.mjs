@@ -141,15 +141,22 @@ function senderOf(text) {
 function datesOf(text) {
   const found = [];
   const seen = new Set();
-  for (const match of text.matchAll(/\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\b/g)) {
+  for (const match of text.matchAll(/\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})(?!\d)/g)) {
     const iso = validDate(Number(match[3]), Number(match[2]), Number(match[1]));
     if (iso && !seen.has(iso)) {
       seen.add(iso);
       found.push({ iso, quote: match[0] });
     }
   }
+  for (const match of text.matchAll(/\b(\d{4})-(\d{2})-(\d{2})(?!\d)/g)) {
+    const iso = validDate(Number(match[1]), Number(match[2]), Number(match[3]));
+    if (iso && !seen.has(iso)) {
+      seen.add(iso);
+      found.push({ iso, quote: match[0] });
+    }
+  }
   const months = Object.keys(MONTHS).join("|");
-  for (const match of text.matchAll(new RegExp(`\\b(\\d{1,2})\\s+(${months})\\s+(\\d{4})\\b`, "gi"))) {
+  for (const match of text.matchAll(new RegExp(`\\b(\\d{1,2})\\s+(${months})\\s+(\\d{4})(?!\\d)`, "gi"))) {
     const iso = validDate(Number(match[3]), MONTHS[fold(match[2])], Number(match[1]));
     if (iso && !seen.has(iso)) {
       seen.add(iso);
@@ -158,66 +165,82 @@ function datesOf(text) {
   }
   return found;
 }
+function dateAt(text) {
+  let match = text.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})(?!\d)/);
+  let iso = null;
+  if (match) iso = validDate(Number(match[3]), Number(match[2]), Number(match[1]));
+  else if ((match = text.match(/^(\d{4})-(\d{2})-(\d{2})(?!\d)/))) iso = validDate(Number(match[1]), Number(match[2]), Number(match[3]));
+  else if ((match = text.match(new RegExp(`^(\\d{1,2})\\s+(${Object.keys(MONTHS).join("|")})\\s+(\\d{4})(?!\\d)`, "i")))) {
+    iso = validDate(Number(match[3]), MONTHS[fold(match[2])], Number(match[1]));
+  } else return null;
+  return iso ? { iso, quote: match[0] } : null;
+}
+function letterDateOf(text) {
+  let previous = "";
+  for (const line of text.split("\n").slice(0, 15)) {
+    const clean = line.split(/\s+/).join(" ").trim();
+    if (!clean) continue;
+    const header = clean.match(/^(?:[^\d,]{2,40}(?:,\s*|\s+(?=dnia\b)))?(?:dnia\s+|dn\.\s*)?(.+?)(?:\s*r(?:\.|oku)?)?$/i);
+    ABSOLUTE_CUE.lastIndex = 0;
+    const labelled = previous.endsWith(":") || ABSOLUTE_CUE.test(`${previous} `);
+    ABSOLUTE_CUE.lastIndex = 0;
+    if (header && !labelled) {
+      const found = dateAt(header[1]);
+      if (found && found.quote === header[1]) return found;
+    }
+    previous = clean;
+  }
+  return null;
+}
+const WORD_DAYS = { jeden: 1, jednego: 1, dwa: 2, dwóch: 2, dwoch: 2, trzech: 3, trzy: 3, siedmiu: 7, siedem: 7, czternastu: 14, czternaście: 14, czternascie: 14, trzydziestu: 30, trzydzieści: 30, trzydziesci: 30 };
+const RELATIVE = new RegExp(
+  `(?<![\\p{L}\\p{N}_])w (?:(?:(?:nieprzekraczalnym|ostatecznym|dodatkowym|wyznaczonym|zakreślonym|ustawowym|tym)\\s+)?terminie|ciągu)\\s+(?:(\\d{1,3}|${Object.keys(WORD_DAYS).join("|")})(?:\\s*\\([^)]{1,20}\\))?\\s+(dni|tygodni|miesięcy|miesiecy|miesiące|miesiace)|(tygodnia|miesiąca|miesiaca))(?:\\s+(kalendarzowych|roboczych))?(?:\\s+od\\s+((?:(?!w (?:(?:(?:nieprzekraczalnym|ostatecznym|dodatkowym|wyznaczonym|zakreślonym|ustawowym|tym)\\s+)?terminie|ciągu)\\s)[^.\\n;,]){3,80}))?`,
+  "giu",
+);
+const ABSOLUTE_CUE = /(?:w terminie do|do dnia|nie później niż|nie pozniej niz|termin upływa|termin uplywa|termin płatności|termin platnosci|termin zapłaty|termin zaplaty|płatne do|platne do|płatna do|platna do|płatny do|platny do|płatność do|platnosc do|zapłata do|zaplata do|wpłata do|wplata do|zapłacić do|zaplacic do|wpłacić do|wplacic do)\s*:?\s+(?:up[łl]ywa\s+)?(?:z dniem\s+|dnia\s+)?/gi;
 function deadlinesOf(text, delivery) {
   const items = [];
-  const relative = /w (?:terminie|ciągu)\s+(\d{1,3})\s+dni(?:\s+(kalendarzowych|roboczych))?\s+od\s+([^.\n]{3,80})/gi;
-  for (const match of text.matchAll(relative)) {
-    const business = (match[2] || "").toLowerCase().startsWith("robocz");
-    const anchorText = match[3].trim();
-    const folded = fold(anchorText);
+  for (const match of text.matchAll(RELATIVE)) {
+    const [, count, plural, single, kindOfDays, anchorText] = match;
+    const unit = fold(plural || single);
+    const business = (kindOfDays || "").toLowerCase().startsWith("robocz");
+    const folded = fold(anchorText || "");
     let anchor = "inny";
     if (folded.includes("doręcz") || folded.includes("dorecz") || folded.includes("otrzym")) anchor = "doreczenie";
     else if (folded.includes("niniejsz")) anchor = "data_pisma";
-    let note = "Daty kalendarzowej nie liczę. W piśmie jest tylko liczba dni.";
+    let days = null;
+    if (unit === "dni") days = /^\d+$/.test(count) ? Number(count) : WORD_DAYS[fold(count)];
+    let note;
     if (business) note = "Pismo mówi o dniach roboczych. Tych dni nie liczę.";
     else if (delivery && anchor === "doreczenie") {
-      note = `Podałeś datę doręczenia ${delivery}. Nie dodaję do niej dni — sam policz, czy liczyć od tego dnia, czy od następnego.`;
-    }
+      note = `Podałeś datę doręczenia ${delivery}. Nie liczę od niej terminu — sam policz, czy liczyć od tego dnia, czy od następnego.`;
+    } else if (days === null) note = "Daty kalendarzowej nie liczę. W piśmie jest okres w tygodniach albo miesiącach.";
+    else if (/^\d+$/.test(count)) note = "Daty kalendarzowej nie liczę. W piśmie jest tylko liczba dni.";
+    else note = "Daty kalendarzowej nie liczę. W piśmie jest liczba dni słowem, nie cyfrą.";
     items.push({
       kind: "relative",
-      quote: match[0].split(/\s+/).join(" "),
-      days: Number(match[1]),
+      quote: match[0].trim().split(/\s+/).join(" "),
+      days,
       business_days: business,
       anchor,
       calendar_date: null,
       note,
     });
   }
-  const cue = /(?:do dnia|nie później niż|nie pozniej niz|termin upływa|termin uplywa|termin płatności|termin platnosci|płatne do|platne do|płatna do|platna do|płatny do|platny do|zapłacić do|zaplacic do|wpłacić do|wplacic do)\s*:?\s+/gi;
-  for (const match of text.matchAll(cue)) {
-    const window = text.slice(match.index + match[0].length, match.index + match[0].length + 32);
-    const numeric = window.match(/^(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})/);
-    const word = window.trimStart().match(new RegExp(`^(\\d{1,2})\\s+(${Object.keys(MONTHS).join("|")})\\s+(\\d{4})`, "i"));
-    const dateMatch = numeric || word;
-    if (!dateMatch) continue;
-    const iso = numeric
-      ? validDate(Number(numeric[3]), Number(numeric[2]), Number(numeric[1]))
-      : validDate(Number(word[3]), MONTHS[fold(word[2])], Number(word[1]));
-    if (!iso) continue;
+  const seenDates = new Set();
+  for (const cue of text.matchAll(ABSOLUTE_CUE)) {
+    const start = cue.index + cue[0].length;
+    const found = dateAt(text.slice(start, start + 32));
+    if (!found || seenDates.has(found.iso)) continue;
+    seenDates.add(found.iso);
     items.push({
       kind: "absolute",
-      quote: `${match[0]}${dateMatch[0]}`.split(/\s+/).join(" "),
+      quote: `${cue[0]}${found.quote}`.split(/\s+/).join(" "),
       days: null,
       business_days: false,
       anchor: "data_w_tekscie",
-      calendar_date: iso,
+      calendar_date: found.iso,
       note: "Ta data jest w piśmie, przy słowie o terminie. Nie sprawdzałem, czy to na pewno ten termin.",
-    });
-  }
-  const words = "jeden|jednego|dwa|dwóch|dwoch|trzech|trzy|siedmiu|siedem|czternastu|czternaście|czternascie|trzydziestu|trzydzieści|trzydziesci";
-  const wordDays = { jeden: 1, jednego: 1, dwa: 2, dwóch: 2, dwoch: 2, trzech: 3, trzy: 3, siedmiu: 7, siedem: 7, czternastu: 14, czternaście: 14, czternascie: 14, trzydziestu: 30, trzydzieści: 30, trzydziesci: 30 };
-  for (const match of text.matchAll(new RegExp(`w (?:terminie|ciągu)\\s+(${words})\\s+dni(?:\\s+(kalendarzowych|roboczych))?(?:\\s+od\\s+([^.\\n]{3,60}))?`, "gi"))) {
-    const business = (match[2] || "").toLowerCase().startsWith("robocz");
-    items.push({
-      kind: "relative",
-      quote: match[0].split(/\s+/).join(" "),
-      days: wordDays[fold(match[1])],
-      business_days: business,
-      anchor: match[3] && fold(match[3]).includes("doręcz") ? "doreczenie" : "inny",
-      calendar_date: null,
-      note: business
-        ? "Pismo mówi o dniach roboczych. Tych dni nie liczę."
-        : "Daty kalendarzowej nie liczę. W piśmie jest liczba dni słowem, nie cyfrą.",
     });
   }
   return items;
@@ -288,6 +311,7 @@ function parseDelivery(value) {
 export function analyze(text, options = {}) {
   if (text == null) throw new Error("brak tekstu. wklej pismo.");
   if (text.length > MAX_CHARS) throw new Error("za długi tekst. wklej samo pismo, bez załączników.");
+  text = text.replace(/\r\n?|[\v\f\x85\u2028\u2029]/g, "\n");
   if (!readable(text)) {
     throw new Error("Nie czytam skanu, zdjęcia ani pustego pliku. Przepisz: kto napisał, znak sprawy, datę, zdanie o terminie, kwotę i telefon z pisma.");
   }
@@ -319,6 +343,7 @@ export function analyze(text, options = {}) {
     kind,
     sender,
     case_id: caseId,
+    letter_date: letterDateOf(redacted),
     dates_found: dates,
     deadlines,
     amounts,
@@ -402,16 +427,16 @@ export function familyCard(analysis) {
 }
 
 function draft(analysis) {
-  const bits = ["Szanowni Państwo,", "", "nawiązuję do pisma"];
-  const dates = analysis.dates_found || [];
-  if (dates.length === 1) bits.push(`z dnia ${dates[0].quote}`);
+  const bits = ["nawiązuję do pisma"];
+  if (analysis.letter_date) bits.push(`z dnia ${analysis.letter_date.quote}`);
   if (analysis.case_id) bits.push(`znak ${analysis.case_id}`);
-  bits.push(".");
   return [
     "Szkic do własnej edycji. Nic nie zostało wysłane.",
     "To nie jest pismo do sądu i nie jest pomocą prawną.",
     "",
-    bits.join(" "),
+    "Szanowni Państwo,",
+    "",
+    `${bits.join(" ")}.`,
     "",
     "[Tu napisz jednym zdaniem, o co prosisz. Automat tego nie wpisuje.]",
     "",
@@ -428,6 +453,7 @@ export function humanCard(analysis) {
   if (analysis.kind?.quote) lines.push(`Cytat: ${analysis.kind.quote}`);
   lines.push(`Kto napisał: ${analysis.sender || "nie widzę"}`);
   lines.push(`Znak sprawy: ${analysis.case_id || "nie widzę"}`);
+  if (analysis.letter_date) lines.push(`Data pisma: ${analysis.letter_date.quote}`);
   const dates = analysis.dates_found || [];
   lines.push(dates.length
     ? `Daty znalezione w tekście (to nie znaczy, że to termin): ${dates.map((item) => item.quote).join(", ")}`

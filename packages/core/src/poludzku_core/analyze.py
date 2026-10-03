@@ -81,9 +81,9 @@ ZUS = ("zakład ubezpiecze", "zaklad ubezpiecze", "zakładu ubezpiecze", "zaklad
 TAX_STEM = "skarbow"
 
 UOKiK_PHONES = ("801 440 220", "222 66 76 76")
-NUMERIC_DATE = re.compile(r"\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})\b")
+NUMERIC_DATE = re.compile(r"\b(\d{1,2})[.\-/](\d{1,2})[.\-/](\d{4})(?!\d)")
 WORD_DATE = re.compile(
-    r"\b(\d{1,2})\s+(" + "|".join(MONTHS) + r")\s+(\d{4})\b",
+    r"\b(\d{1,2})\s+(" + "|".join(MONTHS) + r")\s+(\d{4})(?!\d)",
     re.IGNORECASE,
 )
 CASE_ID = re.compile(
@@ -97,14 +97,17 @@ AMOUNT = re.compile(
 PHONE = re.compile(
     r"(?i)(?:telefon|tel\.?|fax)\s*[:.]?\s*(\+48[\s-]?)?(\(?\d{2,3}\)?(?:[\s\-]\d{2,3}){2,3})"
 )
-RELATIVE = re.compile(
-    r"(?i)w (?:terminie|ciągu)\s+(\d{1,3})\s+dni(?:\s+(kalendarzowych|roboczych))?\s+od\s+([^.\n]{3,80})"
-)
+ISO_DATE = re.compile(r"\b(\d{4})-(\d{2})-(\d{2})(?!\d)")
 ABSOLUTE_CUE = re.compile(
-    r"(?i)(?:do dnia|nie później niż|nie pozniej niz|termin upływa|termin uplywa|"
-    r"termin płatności|termin platnosci|płatne do|platne do|płatna do|platna do|"
-    r"płatny do|platny do|zapłacić do|zaplacic do|wpłacić do|wplacic do)\s*:?\s+"
+    r"(?i)(?:w terminie do|do dnia|nie później niż|nie pozniej niz|termin upływa|termin uplywa|"
+    r"termin płatności|termin platnosci|termin zapłaty|termin zaplaty|płatne do|platne do|"
+    r"płatna do|platna do|płatny do|platny do|płatność do|platnosc do|zapłata do|zaplata do|"
+    r"wpłata do|wplata do|zapłacić do|zaplacic do|wpłacić do|wplacic do)\s*:?\s+(?:up[łl]ywa\s+)?(?:z dniem\s+|dnia\s+)?"
 )
+HEADER_DATE = re.compile(
+    r"(?i)^(?:[^\d,]{2,40}(?:,\s*|\s+(?=dnia\b)))?(?:dnia\s+|dn\.\s*)?(.+?)(?:\s*r(?:\.|oku)?)?$"
+)
+LINE_BREAKS = re.compile(r"\r\n?|[\v\f\x85  ]")
 WORD_NUMBERS = {
     "jeden": 1,
     "jednego": 1,
@@ -122,6 +125,17 @@ WORD_NUMBERS = {
     "trzydzieści": 30,
     "trzydziesci": 30,
 }
+PLURAL_UNITS = ("dni", "tygodni", "miesięcy", "miesiecy", "miesiące", "miesiace")
+SINGLE_UNITS = ("tygodnia", "miesiąca", "miesiaca")
+RELATIVE = re.compile(
+    r"(?i)\bw (?:(?:(?:nieprzekraczalnym|ostatecznym|dodatkowym|wyznaczonym|zakreślonym|ustawowym|tym)\s+)?terminie|ciągu)\s+(?:(\d{1,3}|"
+    + "|".join(WORD_NUMBERS)
+    + r")(?:\s*\([^)]{1,20}\))?\s+("
+    + "|".join(PLURAL_UNITS)
+    + r")|("
+    + "|".join(SINGLE_UNITS)
+    + r"))(?:\s+(kalendarzowych|roboczych))?(?:\s+od\s+((?:(?!w (?:(?:(?:nieprzekraczalnym|ostatecznym|dodatkowym|wyznaczonym|zakreślonym|ustawowym|tym)\s+)?terminie|ciągu)\s)[^.\n;,]){3,80}))?"
+)
 
 
 class Unreadable(Exception):
@@ -169,7 +183,7 @@ def _readable(text: str) -> bool:
 
 def _line_of(text: str, needle: str) -> str | None:
     folded = _fold(needle)
-    for line in text.splitlines():
+    for line in text.split("\n"):
         if folded in _fold(line):
             clean = " ".join(line.split())
             return clean[:180] if clean else None
@@ -186,7 +200,7 @@ def _kind(text: str) -> dict | None:
 
 
 def _sender(text: str) -> str | None:
-    for line in text.splitlines()[:20]:
+    for line in text.split("\n")[:20]:
         clean = " ".join(line.split())
         if not clean or len(clean) > 120:
             continue
@@ -196,11 +210,47 @@ def _sender(text: str) -> str | None:
     return None
 
 
+def _date_at(text: str) -> dict | None:
+    """A date at the very start of text: 1.03.2026, 2026-03-01 or 1 marca 2026."""
+    match = NUMERIC_DATE.match(text)
+    if match:
+        iso = _valid_date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+    elif match := ISO_DATE.match(text):
+        iso = _valid_date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
+    elif match := WORD_DATE.match(text):
+        iso = _valid_date(int(match.group(3)), MONTHS[_fold(match.group(2))], int(match.group(1)))
+    else:
+        return None
+    return {"iso": iso, "quote": match.group(0)} if iso else None
+
+
+def _letter_date(text: str) -> dict | None:
+    """Only a header line that is a date, e.g. 'Lublin, dnia 1 marca 2026 r.'."""
+    previous = ""
+    for line in text.split("\n")[:15]:
+        clean = " ".join(line.split())
+        if not clean:
+            continue
+        header = HEADER_DATE.match(clean)
+        labelled = previous.endswith(":") or ABSOLUTE_CUE.search(previous + " ") is not None
+        if header and not labelled:
+            found = _date_at(header.group(1))
+            if found and found["quote"] == header.group(1):
+                return found
+        previous = clean
+    return None
+
+
 def _dates(text: str) -> list[dict]:
     found: list[dict] = []
     seen: set[str] = set()
     for match in NUMERIC_DATE.finditer(text):
         iso = _valid_date(int(match.group(3)), int(match.group(2)), int(match.group(1)))
+        if iso and iso not in seen:
+            seen.add(iso)
+            found.append({"iso": iso, "quote": match.group(0)})
+    for match in ISO_DATE.finditer(text):
+        iso = _valid_date(int(match.group(1)), int(match.group(2)), int(match.group(3)))
         if iso and iso not in seen:
             seen.add(iso)
             found.append({"iso": iso, "quote": match.group(0)})
@@ -216,79 +266,58 @@ def _dates(text: str) -> list[dict]:
 def _deadlines(text: str, delivery: str | None) -> list[dict]:
     items: list[dict] = []
     for match in RELATIVE.finditer(text):
-        business = (match.group(2) or "").casefold().startswith("robocz")
-        anchor_text = match.group(3).strip()
-        folded = _fold(anchor_text)
+        count, plural, single, kind_of_days, anchor_text = match.groups()
+        unit = _fold(plural or single)
+        business = (kind_of_days or "").casefold().startswith("robocz")
+        folded = _fold(anchor_text or "")
         if "doręcz" in folded or "dorecz" in folded or "otrzym" in folded:
             anchor = "doreczenie"
         elif "niniejsz" in folded:
             anchor = "data_pisma"
         else:
             anchor = "inny"
+        days = None
+        if unit == "dni":
+            days = int(count) if count.isdigit() else WORD_NUMBERS[_fold(count)]
         if business:
             note = "Pismo mówi o dniach roboczych. Tych dni nie liczę."
         elif delivery and anchor == "doreczenie":
             note = (
                 f"Podałeś datę doręczenia {delivery}. "
-                "Nie dodaję do niej dni — sam policz, czy liczyć od tego dnia, czy od następnego."
+                "Nie liczę od niej terminu — sam policz, czy liczyć od tego dnia, czy od następnego."
             )
-        else:
+        elif days is None:
+            note = "Daty kalendarzowej nie liczę. W piśmie jest okres w tygodniach albo miesiącach."
+        elif count.isdigit():
             note = "Daty kalendarzowej nie liczę. W piśmie jest tylko liczba dni."
+        else:
+            note = "Daty kalendarzowej nie liczę. W piśmie jest liczba dni słowem, nie cyfrą."
         items.append(
             {
                 "kind": "relative",
                 "quote": " ".join(match.group(0).split()),
-                "days": int(match.group(1)),
+                "days": days,
                 "business_days": business,
                 "anchor": anchor,
                 "calendar_date": None,
                 "note": note,
             }
         )
+    seen_dates: set[str] = set()
     for cue in ABSOLUTE_CUE.finditer(text):
-        window = text[cue.end() : cue.end() + 32]
-        date_match = NUMERIC_DATE.match(window) or WORD_DATE.match(window.lstrip())
-        if date_match is None:
+        found = _date_at(text[cue.end() : cue.end() + 32])
+        if found is None or found["iso"] in seen_dates:
             continue
-        if not date_match.group(0)[:1].isdigit():
-            continue
-        if WORD_DATE.match(date_match.group(0)):
-            month = MONTHS[_fold(date_match.group(2))]
-            iso = _valid_date(int(date_match.group(3)), month, int(date_match.group(1)))
-        else:
-            iso = _valid_date(int(date_match.group(3)), int(date_match.group(2)), int(date_match.group(1)))
-        if not iso:
-            continue
-        quote = " ".join((cue.group(0) + date_match.group(0)).split())
+        seen_dates.add(found["iso"])
         items.append(
             {
                 "kind": "absolute",
-                "quote": quote,
+                "quote": " ".join((cue.group(0) + found["quote"]).split()),
                 "days": None,
                 "business_days": False,
                 "anchor": "data_w_tekscie",
-                "calendar_date": iso,
+                "calendar_date": found["iso"],
                 "note": "Ta data jest w piśmie, przy słowie o terminie. Nie sprawdzałem, czy to na pewno ten termin.",
-            }
-        )
-    word_rel = re.compile(
-        r"(?i)w (?:terminie|ciągu)\s+("
-        + "|".join(WORD_NUMBERS)
-        + r")\s+dni(?:\s+(kalendarzowych|roboczych))?(?:\s+od\s+([^.\n]{3,60}))?"
-    )
-    for match in word_rel.finditer(text):
-        business = (match.group(2) or "").casefold().startswith("robocz")
-        items.append(
-            {
-                "kind": "relative",
-                "quote": " ".join(match.group(0).split()),
-                "days": WORD_NUMBERS[_fold(match.group(1))],
-                "business_days": business,
-                "anchor": "doreczenie" if match.group(3) and "doręcz" in _fold(match.group(3)) else "inny",
-                "calendar_date": None,
-                "note": "Pismo mówi o dniach roboczych. Tych dni nie liczę."
-                if business
-                else "Daty kalendarzowej nie liczę. W piśmie jest liczba dni słowem, nie cyfrą.",
             }
         )
     return items
@@ -374,6 +403,7 @@ def analyze(text: str, *, delivery: str | None = None) -> dict:
         raise Unreadable("brak tekstu. wklej pismo.")
     if len(text) > MAX_CHARS:
         raise Unreadable("za długi tekst. wklej samo pismo, bez załączników.")
+    text = LINE_BREAKS.sub("\n", text)
     if not _readable(text):
         raise Unreadable(
             "Nie czytam skanu, zdjęcia ani pustego pliku. "
@@ -438,6 +468,7 @@ def analyze(text: str, *, delivery: str | None = None) -> dict:
         "kind": kind,
         "sender": sender,
         "case_id": case_id,
+        "letter_date": _letter_date(redacted),
         "dates_found": dates,
         "deadlines": deadlines,
         "amounts": amounts,

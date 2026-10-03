@@ -78,20 +78,21 @@ def family_card(analysis: dict) -> str:
 
 
 def _draft(analysis: dict) -> str:
-    bits = ["Szanowni Państwo,", "", "nawiązuję do pisma"]
-    dates = analysis.get("dates_found") or []
-    if len(dates) == 1:
-        bits.append(f"z dnia {dates[0]['quote']}")
+    bits = ["nawiązuję do pisma"]
+    letter_date = analysis.get("letter_date")
+    if letter_date:
+        bits.append(f"z dnia {letter_date['quote']}")
     case_id = analysis.get("case_id")
     if case_id:
         bits.append(f"znak {case_id}")
-    bits.append(".")
     return "\n".join(
         [
             "Szkic do własnej edycji. Nic nie zostało wysłane.",
             "To nie jest pismo do sądu i nie jest pomocą prawną.",
             "",
-            " ".join(bits),
+            "Szanowni Państwo,",
+            "",
+            " ".join(bits) + ".",
             "",
             "[Tu napisz jednym zdaniem, o co prosisz. Automat tego nie wpisuje.]",
             "",
@@ -111,6 +112,8 @@ def human_card(analysis: dict) -> str:
         lines.append(f"Cytat: {kind['quote']}")
     lines.append(f"Kto napisał: {analysis.get('sender') or 'nie widzę'}")
     lines.append(f"Znak sprawy: {analysis.get('case_id') or 'nie widzę'}")
+    if analysis.get("letter_date"):
+        lines.append(f"Data pisma: {analysis['letter_date']['quote']}")
     dates = analysis.get("dates_found") or []
     if dates:
         lines.append(

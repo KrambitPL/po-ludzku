@@ -207,3 +207,105 @@ def test_empty_pdf_fails_closed(tmp_path: Path):
     writer.write(blank)
     with pytest.raises(Unreadable):
         analyze(extract_pdf_text(blank))
+
+
+BAILIFF_REAL = """Komornik Sądowy przy Sądzie Rejonowym w Krakowie
+Kancelaria Komornicza nr X w Krakowie
+Sygn. akt KM 1234/26
+
+ZAWIADOMIENIE O WSZCZĘCIU EGZEKUCJI
+
+Na podstawie tytułu wykonawczego - nakazu zapłaty Sądu Rejonowego z dnia 12.01.2026, sygn. I Nc 55/26.
+Należność główna: 12 450,00 zł, odsetki 1 103,22 zł.
+Wzywam dłużnika do zapłaty w terminie 7 dni.
+Na czynności komornika przysługuje skarga do Sądu Rejonowego w terminie 7 dni od dnia dokonania czynności.
+"""
+
+ZUS_REAL = """ZAKŁAD UBEZPIECZEŃ SPOŁECZNYCH
+Oddział w Lublinie
+Lublin, 2026-09-14
+
+DECYZJA nr 123/2026
+
+ZUS ustala zaległość z tytułu składek w wysokości 3 400 PLN.
+Od niniejszej decyzji przysługuje odwołanie do Sądu Okręgowego za pośrednictwem ZUS w terminie miesiąca od dnia jej doręczenia.
+Płatność do 30 października 2026 r.
+"""
+
+
+def test_relative_deadline_without_anchor_is_found():
+    result = analyze(BAILIFF_REAL)
+    quotes = [item["quote"] for item in result["deadlines"]]
+    assert "w terminie 7 dni" in quotes
+    assert any("dokonania czynności" in quote for quote in quotes)
+
+
+def test_month_deadline_payment_cue_and_iso_date():
+    result = analyze(ZUS_REAL)
+    assert "nie widzę terminu" not in result["unknown"]
+    month = [item for item in result["deadlines"] if "miesiąca" in item["quote"]]
+    assert month and month[0]["anchor"] == "doreczenie"
+    assert month[0]["days"] is None
+    assert month[0]["calendar_date"] is None
+    assert any(item["calendar_date"] == "2026-10-30" for item in result["deadlines"])
+    assert any(item["iso"] == "2026-09-14" for item in result["dates_found"])
+    weeks = analyze("Urząd Miasta. Wezwanie. Odpowiedz w ciągu dwóch tygodni od dnia doręczenia pisma.")
+    assert weeks["deadlines"] and weeks["deadlines"][0]["days"] is None
+
+
+def test_letter_date_comes_from_the_header_only():
+    assert analyze(TAX)["letter_date"] == {"iso": "2026-03-01", "quote": "1 marca 2026"}
+    assert analyze(ZUS_REAL)["letter_date"]["iso"] == "2026-09-14"
+    bailiff = analyze(BAILIFF_REAL)
+    assert bailiff["letter_date"] is None
+    assert "12.01.2026" not in human_card(bailiff).split("--- szkic ---")[1]
+
+
+def test_draft_is_formatted():
+    card = human_card(analyze(TAX))
+    draft = card.split("--- szkic ---")[1].split("--- koniec szkicu ---")[0]
+    assert "Szanowni Państwo,\n\nnawiązuję do pisma z dnia 1 marca 2026 znak US-LUB.123.2026." in draft
+    assert "  " not in draft
+    assert " ." not in draft
+
+
+def _quotes_of(text: str) -> list[str]:
+    return [item["quote"] for item in analyze(text)["deadlines"]]
+
+
+def test_r1_two_deadlines_in_one_sentence():
+    quotes = _quotes_of(
+        "Urząd Miasta. Wezwanie do zapłaty 100 zł w terminie 7 dni od doręczenia, "
+        "a odwołanie można wnieść w terminie czternastu dni od dnia doręczenia decyzji."
+    )
+    assert quotes == ["w terminie 7 dni od doręczenia", "w terminie czternastu dni od dnia doręczenia decyzji"]
+    months = _quotes_of("Urząd Miasta. Wezwanie w terminie 3 miesięcy od dnia doręczenia oraz w ciągu miesiąca od publikacji.")
+    assert len(months) == 2
+
+
+def test_r1_year_glued_to_r_and_upływa_phrasings():
+    glued = analyze("Urząd Miasta. Wezwanie do zapłaty 100 zł w terminie do dnia 15.03.2026r. Telefon 81 123 45 67.")
+    assert [item["calendar_date"] for item in glued["deadlines"]] == ["2026-03-15"]
+    for text in (
+        "Wezwanie. Proszę zapłacić w nieprzekraczalnym terminie 7 dni od daty otrzymania niniejszego wezwania.",
+        "Wezwanie. Proszę zapłacić w terminie 14 (czternastu) dni od dnia doręczenia wezwania.",
+        "Wezwanie. Termin płatności upływa dnia 15.03.2026 dla tej należności.",
+        "Wezwanie. Termin upływa z dniem 15.03.2026 dla tej należności i tyle.",
+    ):
+        assert analyze(text)["deadlines"], text
+    twice = analyze("Wezwanie do zapłaty. Termin płatności: 15.03.2026 (płatne do 15.03.2026).")
+    assert len(twice["deadlines"]) == 1
+
+
+def test_r1_letter_date_skips_labelled_deadline_and_reads_more_headers():
+    labelled = analyze("Urząd Miasta Lublin\nTermin płatności:\n15.03.2026\nData wystawienia:\n01.03.2026\nWezwanie do zapłaty 10,00 zł.")
+    assert labelled["letter_date"] is None
+    assert analyze("Urząd Miasta\nLublin, 1 marca 2026 roku\nWezwanie do zapłaty 10,00 zł teraz.")["letter_date"]["iso"] == "2026-03-01"
+    assert analyze("Urząd Miasta\nLublin dnia 1 marca 2026 r.\nWezwanie do zapłaty 10,00 zł teraz.")["letter_date"]["iso"] == "2026-03-01"
+    cr = analyze("Urząd Miasta\rLublin, dnia 1 marca 2026 r.\rWezwanie do zapłaty 10,00 zł teraz.")
+    assert cr["letter_date"]["iso"] == "2026-03-01"
+
+
+def test_r2_idioms_are_not_deadlines():
+    assert _quotes_of("Wspólnota. Najemca w dalszym ciągu 2 miesiące zalega z czynszem za lokal.") == []
+    assert _quotes_of("Wspólnota. Wpłaty dokonano w poprzednim terminie 3 dni po upomnieniu z biura.") == []
