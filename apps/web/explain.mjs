@@ -88,6 +88,13 @@ function redact(text) {
   });
   return [out, { pesel: peselCount, accounts: accountCount }];
 }
+// Unicode keeps every decimal digit set as a contiguous 0-9 run, so the value is the offset in the run.
+function digitValue(char) {
+  const code = char.codePointAt(0);
+  let start = code;
+  while (/\p{Nd}/u.test(String.fromCodePoint(start - 1))) start -= 1;
+  return (code - start) % 10;
+}
 function validDate(year, month, day) {
   const value = new Date(Date.UTC(year, month - 1, day));
   if (value.getUTCFullYear() !== year || value.getUTCMonth() !== month - 1 || value.getUTCDate() !== day) return null;
@@ -180,9 +187,10 @@ function letterDateOf(text) {
   for (const line of text.split("\n").slice(0, 15)) {
     const clean = line.split(/\s+/).join(" ").trim();
     if (!clean) continue;
-    const header = clean.match(/^(?:[^\d,]{2,40}(?:,\s*|\s+(?=dnia\b)))?(?:dnia\s+|dn\.\s*)?(.+?)(?:\s*r(?:\.|oku)?)?$/i);
+    const header = clean.match(/^(?:[^\d,]{2,40}(?:,\s*|\s+(?=dnia\b)))?(?:dnia\s+|dn\.\s*)?(.+?)(?:\s*r(?:\.|oku)?)?$/id);
     ABSOLUTE_CUE.lastIndex = 0;
-    const labelled = previous.endsWith(":") || ABSOLUTE_CUE.test(`${previous} `);
+    const bare = header !== null && !header[0].slice(0, header.indices[1][0]).includes(",");
+    const labelled = (bare && previous.endsWith(":")) || ABSOLUTE_CUE.test(`${previous} `);
     ABSOLUTE_CUE.lastIndex = 0;
     if (header && !labelled) {
       const found = dateAt(header[1]);
@@ -192,9 +200,9 @@ function letterDateOf(text) {
   }
   return null;
 }
-const WORD_DAYS = { jeden: 1, jednego: 1, dwa: 2, dwóch: 2, dwoch: 2, trzech: 3, trzy: 3, siedmiu: 7, siedem: 7, czternastu: 14, czternaście: 14, czternascie: 14, trzydziestu: 30, trzydzieści: 30, trzydziesci: 30 };
+const WORD_DAYS = { jeden: 1, jednego: 1, dwa: 2, dwóch: 2, dwoch: 2, trzech: 3, trzy: 3, siedmiu: 7, siedem: 7, czternastu: 14, czternaście: 14, czternascie: 14, trzydziestu: 30, trzydzieści: 30, trzydziesci: 30, pięciu: 5, pieciu: 5, sześciu: 6, szesciu: 6, dziesięciu: 10, dziesieciu: 10, "dwudziestu jeden": 21, sześćdziesięciu: 60, szescdziesieciu: 60 };
 const RELATIVE = new RegExp(
-  `(?<![\\p{L}\\p{N}_])w (?:(?:(?:nieprzekraczalnym|ostatecznym|dodatkowym|wyznaczonym|zakreślonym|ustawowym|tym)\\s+)?terminie|ciągu)\\s+(?:(\\d{1,3}|${Object.keys(WORD_DAYS).join("|")})(?:\\s*\\([^)]{1,20}\\))?\\s+(dni|tygodni|miesięcy|miesiecy|miesiące|miesiace)|(tygodnia|miesiąca|miesiaca))(?:\\s+(kalendarzowych|roboczych))?(?:\\s+od\\s+((?:(?!w (?:(?:(?:nieprzekraczalnym|ostatecznym|dodatkowym|wyznaczonym|zakreślonym|ustawowym|tym)\\s+)?terminie|ciągu)\\s)[^.\\n;,]){3,80}))?`,
+  `(?<![\\p{L}\\p{N}_])w (?:(?:(?:nieprzekraczalnym|ostatecznym|dodatkowym|wyznaczonym|zakreślonym|ustawowym|tym)\\s+)?terminie|ciągu)\\s+(?:(\\d{1,3}|${Object.keys(WORD_DAYS).map((key) => key.replace(" ", "\\s+")).join("|")})(?:\\s*\\([^)]{1,20}\\))?\\s+(dni|tygodni|miesięcy|miesiecy|miesiące|miesiace)(?![\\p{L}])|(?:jednego\\s+|jeden\\s+|1\\s+)?(tygodnia|miesiąca|miesiaca|(?<=(?:1|jeden|jednego)\\s)dnia(?!\\s+(?:miesiąca|miesiaca|każdego|kazdego))))(?:\\s+(kalendarzowych|roboczych|kalendarzowego|roboczego))?(?:\\s+od\\s+((?:(?!(?:nie później|nie pozniej|do dnia|w (?:(?:(?:nieprzekraczalnym|ostatecznym|dodatkowym|wyznaczonym|zakreślonym|ustawowym|tym)\\s+)?terminie|ciągu)\\s))(?:[0-9]\\.(?=[0-9])|[^.\\n;,])){3,80}))?`,
   "giu",
 );
 const ABSOLUTE_CUE = /(?:w terminie do|do dnia|nie później niż|nie pozniej niz|termin upływa|termin uplywa|termin płatności|termin platnosci|termin zapłaty|termin zaplaty|płatne do|platne do|płatna do|platna do|płatny do|platny do|płatność do|platnosc do|zapłata do|zaplata do|wpłata do|wplata do|zapłacić do|zaplacic do|wpłacić do|wplacic do)\s*:?\s+(?:up[łl]ywa\s+)?(?:z dniem\s+|dnia\s+)?/gi;
@@ -209,17 +217,18 @@ function deadlinesOf(text, delivery) {
     if (folded.includes("doręcz") || folded.includes("dorecz") || folded.includes("otrzym")) anchor = "doreczenie";
     else if (folded.includes("niniejsz")) anchor = "data_pisma";
     let days = null;
-    if (unit === "dni") days = /^\d+$/.test(count) ? Number(count) : WORD_DAYS[fold(count)];
+    if (unit === "dni") days = /^\d+$/.test(count) ? Number(count) : WORD_DAYS[fold(count).split(/\s+/).join(" ")];
+    else if (unit === "dnia") days = 1;
     let note;
     if (business) note = "Pismo mówi o dniach roboczych. Tych dni nie liczę.";
     else if (delivery && anchor === "doreczenie") {
       note = `Podałeś datę doręczenia ${delivery}. Nie liczę od niej terminu — sam policz, czy liczyć od tego dnia, czy od następnego.`;
     } else if (days === null) note = "Daty kalendarzowej nie liczę. W piśmie jest okres w tygodniach albo miesiącach.";
-    else if (/^\d+$/.test(count)) note = "Daty kalendarzowej nie liczę. W piśmie jest tylko liczba dni.";
+    else if (count === undefined || /^\d+$/.test(count)) note = "Daty kalendarzowej nie liczę. W piśmie jest tylko liczba dni.";
     else note = "Daty kalendarzowej nie liczę. W piśmie jest liczba dni słowem, nie cyfrą.";
     items.push({
       kind: "relative",
-      quote: match[0].trim().split(/\s+/).join(" "),
+      quote: match[0].trim().split(/\s+/).join(" ").replace(/\s+(?:oraz|lub|albo|i|a)$/i, ""),
       days,
       business_days: business,
       anchor,
@@ -270,7 +279,7 @@ function phonesOf(text) {
 function quotesOf(text, pattern, limit) {
   const found = [];
   for (const match of text.matchAll(pattern)) {
-    const quote = match[0].split(/\s+/).join(" ").slice(0, 240);
+    const quote = match[0].trim().split(/\s+/).join(" ").slice(0, 240);
     if (quote && !found.includes(quote)) found.push(quote);
     if (found.length >= limit) break;
   }
@@ -311,7 +320,11 @@ function parseDelivery(value) {
 export function analyze(text, options = {}) {
   if (text == null) throw new Error("brak tekstu. wklej pismo.");
   if (text.length > MAX_CHARS) throw new Error("za długi tekst. wklej samo pismo, bez załączników.");
-  text = text.replace(/\r\n?|[\v\f\x85\u2028\u2029]/g, "\n");
+  text = text
+    .normalize("NFC")
+    .replace(/\r\n?|[\v\f\x85\u2028\u2029]/g, "\n")
+    .replace(/[\u00a0\u2007\u2009\u202f]/g, " ")
+    .replace(/[^\x00-\x7f]/gu, (char) => (/\p{Nd}/u.test(char) ? String(digitValue(char)) : char));
   if (!readable(text)) {
     throw new Error("Nie czytam skanu, zdjęcia ani pustego pliku. Przepisz: kto napisał, znak sprawy, datę, zdanie o terminie, kwotę i telefon z pisma.");
   }

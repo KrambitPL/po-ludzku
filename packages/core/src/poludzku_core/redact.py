@@ -7,15 +7,15 @@ ACCOUNT_MARK = "[rachunek wycięty]"
 
 # Longer and more specific patterns first. A following amount must not join the run.
 _ACCOUNTS = (
-    re.compile(r"(?<!\d)\d{26}(?!\d)"),
-    re.compile(r"(?<!\d)\d{2}(?: \d{4}){6}(?!\d)"),
-    re.compile(r"(?<!\d)\d{2}(?:-\d{4}){6}(?!\d)"),
-    re.compile(r"(?<!\d)\d{2}(?: \d{2}){12}(?!\d)"),
+    re.compile(r"(?<![0-9])[0-9]{26}(?![0-9])"),
+    re.compile(r"(?<![0-9])[0-9]{2}(?: [0-9]{4}){6}(?![0-9])"),
+    re.compile(r"(?<![0-9])[0-9]{2}(?:-[0-9]{4}){6}(?![0-9])"),
+    re.compile(r"(?<![0-9])[0-9]{2}(?: [0-9]{2}){12}(?![0-9])"),
 )
 _PESEL = (
-    re.compile(r"(?<!\d)\d{11}(?!\d)"),
-    re.compile(r"(?<!\d)\d(?: \d){10}(?!\d)"),
-    re.compile(r"(?<!\d)\d(?:-\d){10}(?!\d)"),
+    re.compile(r"(?<![0-9])[0-9]{11}(?![0-9])"),
+    re.compile(r"(?<![0-9])[0-9](?: [0-9]){10}(?![0-9])"),
+    re.compile(r"(?<![0-9])[0-9](?:-[0-9]){10}(?![0-9])"),
 )
 
 
@@ -33,7 +33,7 @@ def _sub_all(text: str, patterns: tuple[re.Pattern[str], ...], mark: str, pred=N
 
     def repl(match: re.Match[str]) -> str:
         nonlocal count
-        digits = re.sub(r"\D", "", match.group(0))
+        digits = re.sub(r"[^0-9]", "", match.group(0))
         if pred is not None and not pred(digits):
             return match.group(0)
         count += 1
@@ -56,7 +56,7 @@ def _glued_pesel(text: str) -> tuple[str, int]:
                 return digits[:start] + PESEL_MARK + digits[start + 11 :]
         return digits
 
-    return re.sub(r"(?<!\d)\d{12,}(?!\d)", repl, text), count
+    return re.sub(r"(?<![0-9])[0-9]{12,}(?![0-9])", repl, text), count
 
 
 def redact(text: str) -> tuple[str, dict]:

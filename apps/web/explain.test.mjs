@@ -109,6 +109,14 @@ test("browser engine matches Python", () => {
   same(BAILIFF_REAL);
   same(ZUS_REAL, "14.09.2026");
   same(ZUS_REAL);
+  same("Wspólnota Mieszkaniowa Słoneczna\nWezwanie do zapłaty 50 zł. Opłaty wnosi się w terminie 10 dnia miesiąca, w terminie 15 dnia 03.2026, w ciągu 1 dnia roboczego od doręczenia, w ciągu jednego dnia od wezwania.");
+  same("Zakład Ubezpieczeń Społecznych\nLublin, 1.03.2026\nWezwanie do zapłaty 100 zł w ciągu 14 dni od doręczenia.".normalize("NFD"));
+  same("Sąd Rejonowy. Sprzeciw w terminie dwudziestu\njeden dni od doręczenia, w terminie 1 dnia od doręczenia, w ciągu jednego dnia od wezwania. Zapłata w terminie dnia 15.03.2026 r.");
+  same("Bank S.A.\nWzywamy do zapłaty kwoty 300,00 zł na rachunek 61\u00a01090\u00a01014\u00a00000\u00a00712\u00a01981\u00a02874 w terminie 7 dni.\n   Wzywa się Pana PESEL ٤٤٠٥١٤٠١٣٥٩ do zapłaty 100 zł w terminie ٧ dni oraz 𝟏𝟓 dni.   ");
+  same("Urząd Skarbowy w Lublinie\nTermin wpłaty:\ndnia 15.03.2026 r.\nWezwanie do zapłaty 100 zł w ciągu jednego tygodnia od doręczenia, w terminie 1 miesiąca od dnia doręczenia, w terminie dwudziestu jeden dni od doręczenia.\nLublin, 1.03.2026");
+  same("URZĄD SKARBOWY\nWEZWANIE DO ZAPŁATY 100 ZŁ W TERMINIE 7 DNI OD DORĘCZENIA LUB W TERMINIE 3 DNI OD WEZWANIA.");
+  same("Urząd Miasta Lublin, ul. Długa 5:\nLublin, 1.03.2026\nWezwanie do zapłaty w terminie １４ dni od dnia 01.03.2026 r. lub w terminie ٧ dni. W ciągu jednego miesiąca od doręczenia oraz nie później niż do dnia 20.03.2026 kropka.");
+  same("Urząd Miasta\ne-mail:\n01.03.2026\nWezwanie. Zapłać w ciągu 7 dni od doręczenia oraz w terminie 3 dni od wezwania i tyle.");
   same("Urząd Miasta. Wezwanie w terminie 3 miesięcy od dnia doręczenia oraz w ciągu miesiąca od publikacji. Najemca w dalszym ciągu 2 miesiące zalega.");
   same("Urząd Miasta. Wezwanie do zapłaty 100 zł w terminie 7 dni od doręczenia, a odwołanie można wnieść w terminie czternastu dni od dnia doręczenia decyzji. W ciągu miesiąca od publikacji też.");
   same("Urząd Miasta. Wezwanie w nieprzekraczalnym terminie 14 (czternastu) dni od dnia doręczenia. Termin płatności upływa dnia 15.03.2026r. Termin upływa z dniem 16.03.2026 (płatne do 16.03.2026).");

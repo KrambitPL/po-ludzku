@@ -33,7 +33,7 @@ def _family_demand(analysis: dict) -> str | None:
     folded = quote.casefold()
     if any(token in folded for token in ("ul.", "ulica", "al.", "aleja", "osiedle")):
         return None
-    if __import__("re").search(r"\d{2}[-\u2013]\d{3}|\d{11,}", quote):
+    if __import__("re").search(r"[0-9]{2}[-\u2013][0-9]{3}|[0-9]{11,}", quote):
         return None
     return quote
 

@@ -7,7 +7,7 @@ Powód: przejęta sesja opencode zostawiła R4 bez wyniku. Ręczne testy na real
 - R1: 2×P1 (drugi termin w zdaniu połknięty; „2026r.” zabijało datę), 2×P2, 3×P3. Wszystkie naprawione, poza cyframi Unicode.
 - R2: 0×P0, 0×P1. P2 (idiomy „w dalszym ciągu”, „w poprzednim terminie”) naprawione whitelistą przymiotników. Spacja w cytacie JS naprawiona.
 
-Odłożone (P3, znane):
+Odłożone (P3, znane) — zamknięte 2026-10-03, zob. docs/adversarial-review/2026-10-03-po-ludzku-fixes-R1.md:
 - cyfry pełnej szerokości: Python je czyta, JS nie (tylko brak terminu, nigdy zła data);
 - linia kończąca się „:” przed nagłówkiem z datą gubi datę pisma (bezpieczne: szkic bez daty);
 - „w ciągu jednego miesiąca” nie jest rozpoznawane;

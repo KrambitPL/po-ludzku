@@ -309,3 +309,63 @@ def test_r1_letter_date_skips_labelled_deadline_and_reads_more_headers():
 def test_r2_idioms_are_not_deadlines():
     assert _quotes_of("Wspólnota. Najemca w dalszym ciągu 2 miesiące zalega z czynszem za lokal.") == []
     assert _quotes_of("Wspólnota. Wpłaty dokonano w poprzednim terminie 3 dni po upomnieniu z biura.") == []
+
+
+def test_r3_leftover_gaps():
+    # fullwidth and other Unicode digits read the same as ASCII ones
+    assert [item["days"] for item in analyze("Wezwanie do zapłaty. Proszę zapłacić w terminie １４ dni od dnia doręczenia.")["deadlines"]] == [14]
+    assert [item["days"] for item in analyze("Wezwanie do zapłaty. Proszę zapłacić w terminie ٧ dni od dnia doręczenia pisma.")["deadlines"]] == [7]
+    # a colon at the end of an address line must not hide a header date
+    header = analyze("Urząd Miasta Lublin, ul. Długa 5:\nLublin, 1.03.2026\nWezwanie do zapłaty 10,00 zł teraz.")
+    assert header["letter_date"]["iso"] == "2026-03-01"
+    assert _quotes_of("Wezwanie. Proszę o kontakt w ciągu jednego miesiąca od dnia doręczenia.") != []
+    assert _quotes_of("Wezwanie. Odwołanie w terminie 14 dni od dnia 01.03.2026 r. do sądu.") == [
+        "w terminie 14 dni od dnia 01.03.2026 r"
+    ]
+    both = _quotes_of("Wezwanie. Zapłać w ciągu 7 dni od doręczenia oraz nie później niż do dnia 20.03.2026 kropka.")
+    assert both[0] == "w ciągu 7 dni od doręczenia"
+
+
+def test_r5_nbsp_account_unicode_pesel_and_labels():
+    nbsp = "Bank S.A.\nWzywamy do zapłaty kwoty 300,00 zł na rachunek 61\u00a01090\u00a01014\u00a00000\u00a00712\u00a01981\u00a02874 w terminie 7 dni."
+    result = analyze(nbsp)
+    assert result["accounts_redacted"] == 1
+    assert "1090" not in family_card(result) + human_card(result)
+    narrow = analyze(nbsp.replace("\u00a0", "\u202f"))
+    assert narrow["accounts_redacted"] == 1
+    arabic = analyze("Urząd Miasta\nWzywa się Pana PESEL ٤٤٠٥١٤٠١٣٥٩ do zapłaty 100 zł w terminie 7 dni.")
+    assert arabic["pesel_redacted"] is True
+    labelled = analyze("Urząd Skarbowy w Lublinie\nTermin wpłaty:\ndnia 15.03.2026 r.\nWezwanie do zapłaty 100 zł.\nLublin, 1.03.2026")
+    assert labelled["letter_date"]["iso"] == "2026-03-01"
+    assert analyze("Bank S.A.\nData wymagalności:\ndnia 15 marca 2026 r.\nWezwanie do zapłaty 100 zł teraz.")["letter_date"] is None
+
+
+def test_r5_singular_units_and_word_counts():
+    week = analyze("Urząd Gminy\nWezwanie do zapłaty 50 zł w ciągu jednego tygodnia od doręczenia.")["deadlines"]
+    assert week[0]["quote"] == "w ciągu jednego tygodnia od doręczenia" and week[0]["anchor"] == "doreczenie"
+    assert _quotes_of("Urząd Gminy. Sprzeciw w terminie 1 tygodnia od doręczenia.") == ["w terminie 1 tygodnia od doręczenia"]
+    assert _quotes_of("Urząd Gminy. Odwołanie w terminie 1 miesiąca od dnia doręczenia.") != []
+    assert [d["days"] for d in analyze("Sąd Rejonowy. Nakaz zapłaty. Sprzeciw w terminie dwudziestu jeden dni od doręczenia.")["deadlines"]] == [21]
+    assert [d["days"] for d in analyze("Sąd Rejonowy. Wezwanie. Uzupełnij braki w terminie pięciu dni od dnia doręczenia.")["deadlines"]] == [5]
+    upper = analyze("URZĄD SKARBOWY\nWEZWANIE DO ZAPŁATY 100 ZŁ W TERMINIE 7 DNI OD DORĘCZENIA LUB W TERMINIE 3 DNI OD WEZWANIA.")
+    assert upper["deadlines"][0]["quote"] == "W TERMINIE 7 DNI OD DORĘCZENIA"
+
+
+def test_r6_nfd_line_broken_word_count_and_one_day():
+    import unicodedata as ud
+
+    nfd = analyze(ud.normalize("NFD", "Zakład Ubezpieczeń Społecznych\nLublin, 1.03.2026\nWezwanie do zapłaty 100 zł w ciągu 14 dni od doręczenia.\n"))
+    assert nfd["deadlines"] and nfd["deadlines"][0]["anchor"] == "doreczenie"
+    assert [d["days"] for d in analyze("Sąd Rejonowy. Sprzeciw w terminie dwudziestu\njeden dni od doręczenia.")["deadlines"]] == [21]
+    assert [d["days"] for d in analyze("Sąd Rejonowy. Wezwanie. Odpowiedz w terminie 1 dnia od doręczenia.")["deadlines"]] == [1]
+    assert [d["days"] for d in analyze("Sąd Rejonowy. Wezwanie. Odpowiedz w ciągu jednego dnia od doręczenia.")["deadlines"]] == [1]
+    assert [d["kind"] for d in analyze("Sąd Rejonowy. Wezwanie do zapłaty w terminie dnia 15.03.2026 r. i tyle.")["deadlines"]] == []
+
+
+def test_r7_day_of_month_is_not_a_period():
+    rent = analyze("Wspólnota Mieszkaniowa Słoneczna\nWezwanie do zapłaty 50 zł. Opłaty za lokal wnosi się w terminie 10 dnia miesiąca na rachunek wspólnoty.")
+    assert [d for d in rent["deadlines"] if d["kind"] == "relative"] == []
+    assert _quotes_of("Sąd Rejonowy. Wezwanie. Odpowiedz w terminie 15 dnia 03.2026 bez zwłoki.") == []
+    assert _quotes_of("Sąd. Wezwanie w terminie 1 dnia miesiąca każdego roku, opłata stała.") == []
+    working = analyze("Sąd Rejonowy. Wezwanie. Odpowiedz w ciągu 1 dnia roboczego od doręczenia.")["deadlines"]
+    assert working[0]["business_days"] is True and working[0]["days"] == 1
